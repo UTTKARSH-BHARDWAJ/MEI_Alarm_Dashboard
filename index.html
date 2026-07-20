@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MEI Alarm Analysis</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js" crossorigin="anonymous"></script>
+    <style>
+        body { font-family: 'Times New Roman', Times, serif; background-color: #f0f2f5; margin: 0; padding: 20px; color: #1a1a1a; }
+        .filter-bar { position: sticky; top: 10px; z-index: 999; background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(5px); padding: 5px 15px; border-radius: 12px; margin-bottom: 10px; display: flex; gap: 15px; align-items: flex-end; box-shadow: 0 4px 15px rgba(0,0,0,0.1); border: 1px solid #dee2e6; }
+        .filter-group { display: flex; flex-direction: column; gap: 5px; }
+        .filter-group label { font-size: 0.75em; font-weight: 800; color: #e17055; text-transform: uppercase; }
+        .filter-group input { padding: 6px 10px; border-radius: 8px; border: 2px solid #eee; }
+        .btn-apply { background: #e17055; color: white; border: none; padding: 8px 16px; border-radius: 8px; font-weight: bold; cursor: pointer; }
+        .btn-upload { background: #0984e3; color: white; border: none; padding: 8px 16px; border-radius: 8px; font-weight: bold; cursor: pointer; }
+        .btn-upload:disabled, .btn-apply:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-reset { background: #dfe6e9; color: #2d3436; border: none; padding: 8px 16px; border-radius: 8px; font-weight: bold; cursor: pointer; }
+        .file-list { display: flex; flex-wrap: wrap; gap: 6px; max-width: 400px; margin-top: 4px; }
+        .file-chip { display: inline-flex; align-items: center; gap: 4px; background: #fff5f2; border: 1px solid #e17055; padding: 3px 8px; border-radius: 6px; font-size: 0.75em; color: #2d3436; animation: chipIn 0.2s ease-out; }
+        .file-chip .remove-file { background: none; border: none; color: #d63031; font-weight: bold; cursor: pointer; font-size: 1.1em; padding: 0 2px; line-height: 1; }
+        .file-chip .remove-file:hover { color: #e17055; }
+        @keyframes chipIn { from { opacity: 0; transform: scale(0.8); } to { opacity: 1; transform: scale(1); } }
+        .dashboard-container { display: grid; grid-template-columns: repeat(4, 1fr); grid-gap: 20px; }
+        .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); border: 1px solid #dee2e6; display: flex; flex-direction: column; }
+        .kpi-card { text-align: center; border-top: 4px solid #e17055; }
+        .kpi-value { font-size: 2.2em; font-weight: 800; }
+        .full-card { grid-column: span 4; }
+        .chart-card { grid-column: span 3; min-height: 400px; }
+        .narrow-card { grid-column: span 2; min-height: 400px; }
+        .clickable-tr { cursor: pointer; transition: background-color 0.2s; }
+        .clickable-tr:hover { background-color: #f8f9fa; }
+        .table-row-active { background-color: rgba(225, 112, 85, 0.15) !important; font-weight: bold; color: #d63031; }
+        .quarter-card { grid-column: span 1; min-height: 400px; }
+        .horizontal-scroll-wrapper { width: 100%; overflow-x: auto; padding: 10px 0; border: 1px solid #eee; border-radius: 8px; }
+        .scroll-chart-container { min-width: 2000px; height: 420px; padding-left: 20px; }
+        .canvas-wrapper { position: relative; flex-grow: 1; min-height: 0; }
+        .scroll-container { overflow-y: auto; flex-grow: 1; max-height: 380px; }
+        .list-item { display: flex; align-items: center; padding: 12px; border-bottom: 1px solid #eee; cursor: pointer; }
+        .rank-badge { background: #eee; min-width: 25px; height: 25px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-right: 15px; font-weight: bold; font-size: 0.8em; color: #636e72; }
+        .active { background: #e17055 !important; color: white !important; }
+        .active .msg-text, .active .msg-badge { color: white !important; }
+        .pct-bar { height: 8px; background: #e17055; border-radius: 4px; display: inline-block; }
+        h3 { margin-top: 0; border-left: 5px solid #e17055; padding-left: 12px; font-size: 1.1em; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
+        th { text-align: left; padding: 10px; border-bottom: 2px solid #eee; background: #fafafa; }
+        td { padding: 8px; border-bottom: 1px solid #eee; }
+        .message-item { padding: 10px; border-bottom: 1px solid #eee; font-size: 0.85em; display: flex; justify-content: space-between; cursor: pointer; transition: background 0.2s; }
+        .message-item:hover { background: #fff5f2; }
+        .msg-text { flex: 1; padding-right: 10px; color: #2d3436; }
+        .msg-badge { background: #dfe6e9; padding: 2px 8px; border-radius: 8px; font-weight: bold; height: fit-content; color: #000; }
+        .job-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; padding: 10px; }
+        .job-tag { background: #f8f9fa; border: 1px solid #dee2e6; padding: 4px 8px; border-radius: 6px; font-size: 0.8em; text-align: center; color: #4b4b4b; }
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center; }
+        .modal-content { background: white; padding: 25px; border-radius: 12px; max-width: 900px; width: 90%; max-height: 90vh; overflow-y: auto; box-shadow: 0 10px 30px rgba(0,0,0,0.2); position: relative; }
+        .modal-close { position: absolute; top: 15px; right: 20px; font-size: 24px; cursor: pointer; background: none; border: none; color: #636e72; }
+        .machine-mini-card { background: #fff5f2; border: 1px solid #e17055; padding: 15px; border-radius: 12px; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+        .machine-mini-card:hover { transform: translateY(-3px); box-shadow: 0 6px 15px rgba(0,0,0,0.1); }
+        .occurrence-group { margin-bottom: 14px; border-left: 3px solid #6c5ce7; padding-left: 12px; }
+        .occurrence-group-header { font-weight: bold; color: #2d3436; font-size: 0.95em; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+        .occurrence-machine-badge { background: #6c5ce7; color: white; padding: 2px 10px; border-radius: 6px; font-size: 0.85em; }
+        .occurrence-count { color: #636e72; font-size: 0.85em; font-weight: normal; }
+        .occurrence-chip { display: inline-block; background: #f8f9fa; border: 1px solid #dee2e6; padding: 4px 10px; border-radius: 6px; font-size: 0.82em; color: #2d3436; font-family: 'Times New Roman', Times, serif; }
+    </style>
+</head>
+<body>
+    <div class="filter-bar" style="flex-wrap: wrap; align-items: center;">
+        <h1 style="margin: 0; font-size: 1.6em; color: black; flex-basis: 100%; text-align: center; margin-bottom: 5px;">MEI Alarm Analysis</h1>
+        <div class="filter-group">
+            <label>Select Files</label>
+            <input type="file" id="file-input" accept=".csv,.xlsx,.xls,.ods" multiple style="display:none">
+            <button class="btn-reset" onclick="document.getElementById('file-input').click()" style="font-size:0.85em; padding:8px 16px;">📂 Browse Files…</button>
+            <div class="file-list" id="file-list"></div>
+        </div>
+        <button class="btn-apply" id="analyze-btn" onclick="processFiles('analyze')" disabled>⚡ Analyze</button>
+        <button class="btn-upload" id="upload-btn" onclick="processFiles('upload')" disabled>💾 Upload & Store</button>
+        <div class="filter-group"><label>Start Range</label><input type="datetime-local" id="start-date"></div>
+        <div class="filter-group"><label>End Range</label><input type="datetime-local" id="end-date"></div>
+        <div class="filter-group"><label>Global Search</label><input type="text" id="global-search" placeholder="Search anything..." oninput="applyFilters()" style="min-width: 250px;"></div>
+        <button class="btn-apply" onclick="applyFilters()">Update</button>
+        <button class="btn-reset" onclick="resetDashboard()">Reset All</button>
+        <button id="toggle-door-open" onclick="toggleDoorOpen()" style="background: #00cec9; color: white; border: none; padding: 8px 16px; border-radius: 8px; font-weight: bold; cursor: pointer;">Door Open: ON</button>
+        <span id="status-msg" style="margin-left: auto; color: #636e72; font-weight: bold; font-size: 0.85em; white-space: nowrap; margin-bottom: 12px;"></span>
+        <div id="active-filters-container" style="display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 0.85em; color: #e17055; font-weight: 700; flex: 1 1 100%; margin-top: 5px; padding-top: 10px; border-top: 1px dashed #dee2e6; display: none;"></div>
+    </div>
+
+    <div class="dashboard-container">
+        <div class="full-card" style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 15px; padding: 5px; margin-bottom: -5px;" id="machine-cards-container">
+            <!-- Machine cards injected here -->
+        </div>
+
+        <div class="card full-card">
+            <h3> Total Errors by Machine</h3>
+            <div class="canvas-wrapper" style="min-height: 350px;"><canvas id="machineErrorsChart"></canvas></div>
+        </div>
+
+        <div class="card full-card">
+            <h3 id="scroll-title"> Global Alarm Reasons</h3>
+            <div class="horizontal-scroll-wrapper">
+                <div class="scroll-chart-container"><canvas id="scrollChart"></canvas></div>
+            </div>
+        </div>
+
+        <div class="card kpi-card"><div class="kpi-value" id="kpi-total">0</div><div>Total Alarms Count</div></div>
+        <div class="card kpi-card"><div class="kpi-value" id="kpi-units" style="color:#0984e3">0</div><div>Active Units</div></div>
+        <div class="card kpi-card"><div class="kpi-value" id="kpi-top-err" style="color:#00b894">-</div><div>Primary Cause</div></div>
+        <div class="card kpi-card"><div class="kpi-value" id="kpi-worst" style="color:#d63031">-</div><div>Worst Unit</div></div>
+
+        <div class="card full-card">
+            <h3 id="daily-title"> Daily Alarm Trend <span style="font-size:0.7em; font-weight:normal; color:#636e72;">(click a day to filter everything below)</span></h3>
+            <div class="canvas-wrapper" style="min-height: 300px;"><canvas id="dailyChart"></canvas></div>
+        </div>
+
+        <div class="card full-card">
+            <h3> Alarms by Hour of Day</h3>
+            <div class="canvas-wrapper" style="min-height: 350px;"><canvas id="hourlyChart"></canvas></div>
+        </div>
+
+        <div class="card quarter-card"><h3 id="ranking-title"> Machine Ranking</h3><div class="scroll-container" id="leaderboard"></div></div>
+        <div class="card chart-card">
+            <h3 id="chart-title">Root Cause Breakdown</h3>
+            <div class="canvas-wrapper"><canvas id="pieChart"></canvas></div>
+        </div>
+        <div class="card narrow-card"><h3> Table View</h3><div class="scroll-container"><table id="breakdown-table"><thead><tr><th>Reason</th><th>Qty</th><th>%</th></tr></thead><tbody id="breakdown-body"></tbody></table></div></div>
+        <div class="card narrow-card"><h3 id="log-title"> Tech Message Log</h3><div class="scroll-container" id="message-log"></div></div>
+
+        <div class="card full-card">
+            <h3 id="machine-occurrences-title">🔍 Machine Occurrences</h3>
+            <div class="scroll-container" id="machine-occurrences-container">
+                <div style="padding:20px;color:#636e72;text-align:center">Select a reason from Table View to see machine occurrences</div>
+            </div>
+        </div>
+
+        <div class="card full-card" id="card-machine-datetime-logs">
+            <h3 id="machine-datetime-logs-title">🗓️ Machine DateTime Logs</h3>
+            <div class="scroll-container" id="machine-datetime-logs-container">
+                <div style="padding:20px;color:#636e72;text-align:center">Select a reason from Table View to see datetime logs</div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        Chart.register(ChartDataLabels);
+
+        // sanitize user-supplied strings before injecting into HTML
+        function escapeHtml(str) {
+            if (str == null) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        let data = [];
+        let excludeDoorOpen = false;
+        let filtered = [], selectedMessage = null, currentLogReason = null;
+        let selectedMachines = [], selectedReasons = [], selectedDays = [];
+
+        function toggleSelection(arr, item) {
+            const idx = arr.indexOf(item);
+            if (idx > -1) arr.splice(idx, 1);
+            else arr.push(item);
+        }
+        let pieChart = null, scrollChart = null, hourlyChart = null, dailyChart = null, modalChart = null, machineErrorsChart = null;
+        let currentMinTs = '', currentMaxTs = '';
+        const palette = ['#e17055', '#0984e3', '#00b894', '#6c5ce7', '#fdcb6e', '#fab1a0', '#2d3436', '#d63031', '#00cec9', '#74b9ff'];
+
+        function fmtDay(d) {
+            // manual yyyy-mm-dd formatting to avoid tz bugs
+            return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        }
+
+        function fmtPct(count, total) {
+            // prevent small percentages from showing as 0%
+            const pct = total ? (count / total) * 100 : 0;
+            if (pct === 0) return '0%';
+            if (pct < 0.1) return pct.toFixed(3) + '%';
+            if (pct < 1) return pct.toFixed(2) + '%';
+            return pct.toFixed(1) + '%';
+        }
+
+        function setStatus(msg) {
+            document.getElementById('status-msg').innerText = msg;
+        }
+
+        const machineMap = {
+            'Racer 250039-03': 'L10M1',
+            'Racer 250039-04': 'L10M2',
+            'Racer 250039-05': 'L10M3',
+            'Racer 250050-01': 'L10M4',
+            'Racer 250050-02': 'L10M5',
+            'Racer 250061-05': 'L11M1',
+            'Racer 250061-04': 'L11M2',
+            'Racer 250061-03': 'L11M3',
+            'Racer 250061-02': 'L11M4',
+            'Racer 250061-01': 'L11M5',
+            'Racer 210133-05': 'L1M1',
+            'Racer 210133-04': 'L1M2',
+            'Racer 210133-03': 'L1M3',
+            'Racer 210122-05': 'L1M4',
+            'Racer 210122-04': 'L1M5',
+            'Racer 210078-04': 'L2M1',
+            'Racer 210045-05': 'L2M2',
+            'Racer 210067-05': 'L2M3',
+            'Racer 210100-02': 'L2M4',
+            'Racer 210078-05': 'L2M5',
+            'Racer 210188-05': 'L3M1',
+            'Racer 210188-04': 'L3M2',
+            'Racer 210188-03': 'L3M3',
+            'Racer 210199-02': 'L3M4',
+            'Racer 210199-01': 'L3M5',
+            'Racer 220146-05': 'L4M1',
+            'Racer 220157-02': 'L4M2',
+            'Racer 220157-03': 'L4M3',
+            'Racer 220157-04': 'L4M4',
+            'Racer 220212-03': 'L5M1',
+            'Racer 220212-02': 'L5M2',
+            'Racer 220212-01': 'L5M3',
+            'Racer 220201-02': 'L5M4',
+            'Racer 220201-01': 'L5M5',
+            'Racer 230028-05': 'L6M1',
+            'Racer 230039-01': 'L6M2',
+            'Racer 230039-02': 'L6M3',
+            'Racer 230039-03': 'L6M4',
+            'Racer 230039-04': 'L6M5',
+            'Racer 230050-05': 'L7M1',
+            'Racer 230061-01': 'L7M2',
+            'Racer 230061-04': 'L7M3',
+            'Racer 230061-05': 'L7M4',
+            'Racer 230072-01': 'L7M5',
+            'Racer 240085-02': 'L8M1',
+            'Racer 240085-03': 'L8M2',
+            'Racer 240085-04': 'L8M3',
+            'Racer 240085-05': 'L8M4',
+            'Racer 240096-01': 'L8M5',
+            'Racer 240118-02': 'L9M1',
+            'Racer 240118-03': 'L9M2',
+            'Racer 240118-04': 'L9M3',
+            'Racer 240118-05': 'L9M4',
+            'Racer 240129-01': 'L9M5'
+        };
+
+        // fetch from db
+        function loadDataset(payload) {
+            let parsedData = payload.data || [];
+            if (typeof parsedData === 'string' && parsedData !== "[]" && parsedData !== "") {
+                try { parsedData = JSON.parse(parsedData); } catch(e) { parsedData = []; }
+            }
+            if (!Array.isArray(parsedData)) parsedData = [];
+
+            data = parsedData;
+            data.forEach(d => {
+                d['Machine Name'] = machineMap[d['Machine Name']] || d['Machine Name'];
+                d._ts = new Date(d.Timestamp).getTime();
+                d._day = d.Timestamp.slice(0, 10); // extract date string
+            });
+            currentMinTs = payload.min_ts || '';
+            currentMaxTs = payload.max_ts || '';
+            document.getElementById('start-date').value = currentMinTs;
+            document.getElementById('end-date').value = currentMaxTs;
+            applyFilters();
+        }
+
+        function fetchStoredData() {
+            // jinja injects initial payload
+            let rawData = {{ data | safe }};
+            if (typeof rawData === 'string' && rawData !== "[]" && rawData !== "") {
+                try { rawData = JSON.parse(rawData); } catch(e) { rawData = []; }
+            }
+            if (!Array.isArray(rawData)) rawData = [];
+            
+            let minTs = "{{ min_ts }}";
+            let maxTs = "{{ max_ts }}";
+            
+            loadDataset({ data: rawData, min_ts: minTs, max_ts: maxTs });
+            setStatus(data.length ? `Showing ${data.length.toLocaleString()} stored records` : 'No stored data yet — upload files to begin');
+        }
+        // file uploads
+        let selectedFiles = [];
+
+        function updateButtons() {
+            const hasFiles = selectedFiles.length > 0;
+            document.getElementById('analyze-btn').disabled = !hasFiles;
+            document.getElementById('upload-btn').disabled = !hasFiles;
+        }
+
+        function renderFileList() {
+            const container = document.getElementById('file-list');
+            container.innerHTML = selectedFiles.map((f, i) =>
+                `<span class="file-chip">${escapeHtml(f.name)}<button class="remove-file" onclick="removeFile(${i})" title="Remove">✕</button></span>`
+            ).join('');
+            updateButtons();
+        }
+
+        function removeFile(index) {
+            selectedFiles.splice(index, 1);
+            renderFileList();
+            if (selectedFiles.length === 0) setStatus('All files removed');
+        }
+
+        document.getElementById('file-input').addEventListener('change', function() {
+            // append new files
+            for (const f of this.files) {
+                // skip dupes
+                if (!selectedFiles.some(sf => sf.name === f.name && sf.size === f.size)) {
+                    selectedFiles.push(f);
+                }
+            }
+            this.value = ''; // reset input
+            renderFileList();
+            setStatus(`${selectedFiles.length} file(s) selected`);
+        });
+
+        async function processFiles(mode) {
+            if (!selectedFiles.length) { setStatus('Choose files first'); return; }
+            const analyzeBtn = document.getElementById('analyze-btn');
+            const uploadBtn = document.getElementById('upload-btn');
+            analyzeBtn.disabled = true;
+            uploadBtn.disabled = true;
+
+            const isUpload = mode === 'upload';
+            const endpoint = isUpload ? '/store' : '/analyze';
+            setStatus(isUpload ? 'Uploading & storing…' : 'Analyzing (preview only)…');
+
+            const formData = new FormData();
+            selectedFiles.forEach(f => formData.append('files', f));
+
+            try {
+                const res = await fetch(endpoint, { method: 'POST', body: formData });
+                const payload = await res.json();
+                if (!res.ok || payload.error) {
+                    setStatus('Error: ' + (payload.error || 'processing failed'));
+                    return;
+                }
+                loadDataset(payload);
+                if (isUpload) {
+                    setStatus(`Uploaded — ${data.length.toLocaleString()} records now stored (2-month rolling window)`);
+                } else {
+                    setStatus(`Preview — ${data.length.toLocaleString()} records shown (not stored, will disappear on refresh)`);
+                }
+                selectedFiles = [];
+                renderFileList();
+            } catch (e) {
+                setStatus('Failed — check your connection and try again');
+            } finally {
+                updateButtons();
+            }
+        }
+
+        let searchQuery = '';
+
+        function resetDashboard() {
+            document.getElementById('start-date').value = currentMinTs;
+            document.getElementById('end-date').value = currentMaxTs;
+            document.getElementById('global-search').value = '';
+            searchQuery = '';
+            selectedMachines = []; selectedReasons = []; selectedMessage = null; selectedDays = [];
+            excludeDoorOpen = false;
+            document.getElementById('toggle-door-open').innerText = "Door Open: ON";
+            document.getElementById('toggle-door-open').style.background = "#00cec9";
+            applyFilters();
+        }
+
+        
+        function toggleDoorOpen() {
+            excludeDoorOpen = !excludeDoorOpen;
+            const btn = document.getElementById('toggle-door-open');
+            if(excludeDoorOpen) {
+                btn.innerText = "Door Open: OFF";
+                btn.style.background = "#d63031";
+            } else {
+                btn.innerText = "Door Open: ON";
+                btn.style.background = "#00cec9";
+            }
+            applyFilters();
+        }
+
+        function applyFilters() {
+            const s = new Date(document.getElementById('start-date').value).getTime();
+            const e = new Date(document.getElementById('end-date').value).getTime();
+            const searchEl = document.getElementById('global-search');
+            searchQuery = searchEl ? searchEl.value.toLowerCase().trim() : '';
+
+            // filter by timestamp for speed
+            filtered = data.filter(d => {
+                if (d._ts < s || d._ts > e) return false;
+                if (excludeDoorOpen && d['Category'] === 'Door Open') return false;
+                
+                if (searchQuery) {
+                    const job = String(d['Job Name'] || '').toLowerCase();
+                    const order = String(d['Nr Order'] || '').toLowerCase();
+                    const machine = String(d['Machine Name'] || '').toLowerCase();
+                    const reason = String(d['Category'] || '').toLowerCase();
+                    const msg = String(d['Message'] || '').toLowerCase();
+                    
+                    return job.includes(searchQuery) || 
+                           order.includes(searchQuery) || 
+                           machine.includes(searchQuery) || 
+                           reason.includes(searchQuery) || 
+                           msg.includes(searchQuery);
+                }
+                return true;
+            });
+            render();
+        }
+
+        function render() {
+            // apply day filter
+            const dayFiltered = filtered.filter(d => selectedDays.length === 0 || selectedDays.includes(d._day));
+            const reasonsData = dayFiltered.filter(d => selectedReasons.length === 0 || selectedReasons.includes(d['Category']));
+            const counts = {}; reasonsData.forEach(d => counts[d['Machine Name']] = (counts[d['Machine Name']] || 0) + 1);
+            const sorted = Object.entries(counts).sort((a,b) => b[1]-a[1]);
+
+            const container = document.getElementById('machine-cards-container');
+            if (sorted.length > 0) {
+                container.innerHTML = sorted.map(([machine, total], i) => {
+                    const wErrs = {};
+                    dayFiltered.filter(d => d['Machine Name'] === machine).forEach(d => wErrs[d['Category']] = (wErrs[d['Category']] || 0) + 1);
+                    const wSorted = Object.entries(wErrs).sort((a,b) => b[1]-a[1]);
+                    
+                    let topDetailHtml = '-';
+                    if (wSorted.length > 0) {
+                        const topErrName = wSorted[0][0];
+                        const topErrCount = wSorted[0][1];
+                        topDetailHtml = `<div style="color: #d63031; margin-top: 5px; font-weight: bold; font-size: 0.9em; white-space: normal;">Top Reason: ${escapeHtml(topErrName)}</div>
+                                         <div style="font-size: 0.85em; color: #636e72;">${topErrCount.toLocaleString()} errors (${fmtPct(topErrCount, total)})</div>`;
+                    }
+                    
+                    return `<div class="machine-mini-card" onclick="openTopMachineModal('${escapeHtml(machine)}')">
+                        <div style="display: flex; justify-content: space-between; align-items: baseline;">
+                            <h3 style="margin: 0; border: none; padding: 0; font-size: 1.1em; color: #2d3436;">${i===0?' ':''}${escapeHtml(machine)}</h3>
+                            <span style="font-weight: bold; font-size: 1.1em; color: #2d3436;">${total.toLocaleString()}</span>
+                        </div>
+                        ${topDetailHtml}
+                    </div>`;
+                }).join('');
+            } else {
+                container.innerHTML = '<div style="padding: 20px; color: #636e72; text-align: center; width: 100%;">No machine data available</div>';
+            }
+            
+            if (machineErrorsChart) machineErrorsChart.destroy();
+            
+            // render filter tags
+            let filterMsgs = [];
+            let fCount = 1;
+            if (selectedMachines.length > 0) {
+                filterMsgs.push(`<div style="display: flex; align-items: center; gap: 5px; background: rgba(225, 112, 85, 0.1); padding: 4px 8px; border-radius: 6px;"><span>${fCount++}) ${selectedMachines.join(', ')} selected from Machine Chart</span><button onclick="selectedMachines=[]; render();" style="background: none; border: none; color: #d63031; cursor: pointer; font-weight: bold; padding: 0 4px;" title="Clear Machine Filters">✕</button></div>`);
+            }
+            if (selectedReasons.length > 0) {
+                filterMsgs.push(`<div style="display: flex; align-items: center; gap: 5px; background: rgba(225, 112, 85, 0.1); padding: 4px 8px; border-radius: 6px;"><span>${fCount++}) ${selectedReasons.join(', ')} selected from Global Alarm Reasons</span><button onclick="selectedReasons=[]; render();" style="background: none; border: none; color: #d63031; cursor: pointer; font-weight: bold; padding: 0 4px;" title="Clear Reason Filters">✕</button></div>`);
+            }
+            if (selectedDays.length > 0) {
+                filterMsgs.push(`<div style="display: flex; align-items: center; gap: 5px; background: rgba(225, 112, 85, 0.1); padding: 4px 8px; border-radius: 6px;"><span>${fCount++}) ${selectedDays.join(', ')} selected from Daily Alarm Trend</span><button onclick="selectedDays=[]; render();" style="background: none; border: none; color: #d63031; cursor: pointer; font-weight: bold; padding: 0 4px;" title="Clear Date Filters">✕</button></div>`);
+            }
+            
+            const filterContainer = document.getElementById('active-filters-container');
+            filterContainer.innerHTML = filterMsgs.join('');
+            filterContainer.style.display = filterMsgs.length > 0 ? 'flex' : 'none';
+
+            const maxMachineCount = sorted.length ? sorted[0][1] : 10;
+            machineErrorsChart = new Chart(document.getElementById('machineErrorsChart'), {
+                type: 'bar',
+                data: {
+                    labels: sorted.map(x => x[0]),
+                    datasets: [{ 
+                        label: 'Total Errors', 
+                        data: sorted.map(x => x[1]), 
+                        backgroundColor: sorted.map(x => (selectedMachines.length === 0 ? '#0984e3' : (selectedMachines.includes(x[0]) ? '#e17055' : '#b2bec3'))) 
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    onClick: (evt, elements) => {
+                        if (elements.length > 0) {
+                            const label = machineErrorsChart.data.labels[elements[0].index];
+                            toggleSelection(selectedMachines, label);
+                            render();
+                        }
+                    },
+                    plugins: { legend: { display: false }, datalabels: { anchor: 'end', align: 'top', color: '#1a1a1a', font: { weight: 'bold', size: 9 } } },
+                    scales: { 
+                        y: { beginAtZero: true, suggestedMax: maxMachineCount * 1.15 }, 
+                        x: { grid: { display: false }, ticks: { maxRotation: 90, minRotation: 90, font: { size: 9 } } } 
+                    }
+                }
+            });
+
+            // base subset for kpis
+            const sub = selectedMachines.length > 0 ? reasonsData.filter(d => selectedMachines.includes(d['Machine Name'])) : reasonsData;
+
+            document.getElementById('kpi-total').innerText = sub.length.toLocaleString();
+            document.getElementById('kpi-units').innerText = sorted.length;
+            document.getElementById('kpi-worst').innerText = sorted.length ? sorted[0][0].split(' ').pop() : '-';
+            document.getElementById('ranking-title').innerText = selectedReasons.length ? ` Ranking: ${selectedReasons.length > 1 ? selectedReasons.length + ' selected' : selectedReasons[0]}` : ' Machine Ranking';
+
+            document.getElementById('leaderboard').innerHTML = sorted.map(([n, c], i) =>
+                `<div class="list-item ${selectedMachines.includes(n)?'active':''}" onclick="toggleSelection(selectedMachines, '${escapeHtml(n)}'); render()">` +
+                `<div class="rank-badge">${i+1}</div>` +
+                `<span style="flex:1">${escapeHtml(n)}</span>` +
+                `<b>${c}</b></div>`).join('');
+
+            // update global reasons chart
+            const globalFiltered = selectedMachines.length > 0 ? dayFiltered.filter(d => selectedMachines.includes(d['Machine Name'])) : dayFiltered;
+            const globalErrs = {}; globalFiltered.forEach(d => globalErrs[d['Category']] = (globalErrs[d['Category']] || 0) + 1);
+            const sortedGlobal = Object.entries(globalErrs).sort((a,b) => b[1]-a[1]);
+            const maxGlobalVal = sortedGlobal.length ? Math.max(...sortedGlobal.map(x => x[1])) : 10;
+            
+            document.getElementById('scroll-title').innerText = selectedMachines.length ? ` ${selectedMachines.length > 1 ? selectedMachines.length + ' Machines' : selectedMachines[0]} Rejection Reasons` : ' Global Alarm Reasons';
+
+            if(scrollChart) scrollChart.destroy();
+            scrollChart = new Chart(document.getElementById('scrollChart'), {
+                type: 'bar', data: { labels: sortedGlobal.map(x => x[0]), datasets: [{ label: 'Qty', data: sortedGlobal.map(x => x[1]), backgroundColor: sortedGlobal.map(x => (selectedReasons.length === 0 ? '#e17055' : (selectedReasons.includes(x[0]) ? '#d63031' : '#b2bec3'))) }] },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    onClick: (evt, elements) => { if (elements.length > 0) { const label = sortedGlobal[elements[0].index][0]; toggleSelection(selectedReasons, label); render(); } },
+                    plugins: { legend: { display: false }, datalabels: { anchor: 'end', align: 'top', color: '#1a1a1a', font: { weight: 'bold' } } },
+                    scales: { y: { beginAtZero: true, suggestedMax: maxGlobalVal * 1.15 }, x: { grid: { display: false } } }
+                }
+            });
+
+            // daily trend chart
+            // keep full trend visible regardless of day selection
+            const dailyFiltered = filtered.filter(d => 
+                (selectedReasons.length === 0 || selectedReasons.includes(d['Category'])) && 
+                (selectedMachines.length === 0 || selectedMachines.includes(d['Machine Name']))
+            );
+            const dayCounts = {};
+            const startVal = document.getElementById('start-date').value;
+            const endVal = document.getElementById('end-date').value;
+            if (startVal && endVal) {
+                let cur = new Date(startVal); cur.setHours(0,0,0,0);
+                const endD = new Date(endVal); endD.setHours(0,0,0,0);
+                let guard = 0;
+                while (cur <= endD && guard < 366) { dayCounts[fmtDay(cur)] = 0; cur.setDate(cur.getDate() + 1); guard++; }
+            }
+            dailyFiltered.forEach(d => { dayCounts[d._day] = (dayCounts[d._day] || 0) + 1; });
+            const dayLabels = Object.keys(dayCounts).sort();
+            const dayVals = dayLabels.map(k => dayCounts[k]);
+            const maxDayVal = dayVals.length ? Math.max(...dayVals) : 10;
+
+            if (dailyChart) dailyChart.destroy();
+            dailyChart = new Chart(document.getElementById('dailyChart'), {
+                type: 'bar',
+                data: { labels: dayLabels, datasets: [{ label: 'Qty', data: dayVals, backgroundColor: dayLabels.map(d => (selectedDays.length === 0 ? '#0984e3' : (selectedDays.includes(d) ? '#d63031' : '#b2bec3'))) }] },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    onClick: (evt, elements) => { if (elements.length > 0) { const day = dayLabels[elements[0].index]; toggleSelection(selectedDays, day); render(); } },
+                    plugins: { legend: { display: false }, datalabels: { anchor: 'end', align: 'top', color: '#1a1a1a', font: { weight: 'bold', size: 10 } } },
+                    scales: { y: { beginAtZero: true, suggestedMax: maxDayVal * 1.2 }, x: { grid: { display: false } } }
+                }
+            });
+            document.getElementById('daily-title').innerHTML = (selectedDays.length ? `Daily Alarm Trend — 📌 ${selectedDays.length > 1 ? selectedDays.length + ' selected' : selectedDays[0]}` : '📅 Daily Alarm Trend') +
+                ' <span style="font-size:0.7em; font-weight:normal; color:#636e72;">(click a day to filter everything below)</span>';
+
+            const hourCounts = Array(24).fill(0);
+            reasonsData.forEach(d => { if (selectedMachines.length === 0 || selectedMachines.includes(d['Machine Name'])) hourCounts[d.Hour]++; });
+            const maxHourVal = Math.max(...hourCounts);
+
+            if(hourlyChart) hourlyChart.destroy();
+            hourlyChart = new Chart(document.getElementById('hourlyChart'), {
+                type: 'line',
+                data: {
+                    labels: hourCounts.map((_, i) => i + ':00'),
+                    datasets: [{ label: 'Qty', data: hourCounts, borderColor: '#e17055', backgroundColor: 'rgba(225,112,85,0.1)', fill: true, tension: 0.3 }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false }, datalabels: { display: true, align: 'top', backgroundColor: '#fff', borderRadius: 4, padding: 2, font: { size: 9, weight: 'bold' } } },
+                    scales: { y: { beginAtZero: true, suggestedMax: maxHourVal * 1.25 }, x: { grid: { display: false } } }
+                }
+            });
+
+            const errs = {}; sub.forEach(d => errs[d['Category']] = (errs[d['Category']] || 0) + 1);
+            const sortedErrs = Object.entries(errs).sort((a,b) => b[1]-a[1]);
+            const total = sub.length || 1;
+            document.getElementById('kpi-top-err').innerText = sortedErrs.length ? sortedErrs[0][0] : '-';
+            document.getElementById('chart-title').innerText = selectedMachines.length ? ` ${selectedMachines.length > 1 ? selectedMachines.length + ' Machines' : selectedMachines[0]} Reasons` : ' Root Cause Breakdown';
+
+            if(pieChart) pieChart.destroy();
+            pieChart = new Chart(document.getElementById('pieChart'), {
+                type: 'doughnut',
+                data: { labels: sortedErrs.map(x => `${x[0]} (${fmtPct(x[1], total)})`), datasets: [{ data: sortedErrs.map(x => x[1]), backgroundColor: sortedErrs.map((_, i) => palette[i % palette.length]) }] },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    onClick: (evt, elements) => { 
+                        if (elements.length > 0) { 
+                            const fullLabel = pieChart.data.labels[elements[0].index];
+                            const label = fullLabel.split(' (')[0];
+                            toggleSelection(selectedReasons, label); 
+                            render(); 
+                        } 
+                    },
+                    plugins: {
+                        legend: { position: 'right', labels: { boxWidth: 10, font: { size: 10 }, padding: 8 } },
+                        datalabels: {
+                            color: '#fff',
+                            font: { weight: 'bold', size: 12 },
+                            // hide labels for slices < 2% to avoid overlap
+                            display: (ctx) => {
+                                const v = ctx.dataset.data[ctx.dataIndex];
+                                return (v / total) * 100 < 2 ? false : 'auto';
+                            },
+                            formatter: v => ((v / total) * 100).toFixed(1) + '%'
+                        }
+                    }
+                }
+            });
+
+            document.getElementById('breakdown-body').innerHTML = sortedErrs.map(([name, count]) => {
+                const pctNum = (count/total)*100;
+                const isActive = (currentLogReason === name);
+                return `<tr class="clickable-tr ${isActive ? 'table-row-active' : ''}" onclick="selectTableRow(this, '${escapeHtml(name)}')"><td>${escapeHtml(name)}</td><td><b>${count}</b></td><td><div class="pct-bar" style="width: ${pctNum}%"></div> ${fmtPct(count, total)}</td></tr>`;
+            }).join('');
+            
+            // reset active log if reason isn't in current dataset
+            if (currentLogReason && !sortedErrs.some(x => x[0] === currentLogReason)) {
+                currentLogReason = null;
+            }
+            
+            // update logs table
+            if (currentLogReason || searchQuery) {
+                showLogs(currentLogReason);
+            } else {
+                document.getElementById('message-log').innerHTML = '<div style="padding:20px;color:#636e72;text-align:center">Select a table row for logs</div>';
+                renderMachineOccurrences();
+            }
+        }
+
+        function selectTableRow(tr, name) {
+            if (currentLogReason === name) {
+                currentLogReason = null;
+                document.querySelectorAll('.clickable-tr').forEach(el => el.classList.remove('table-row-active'));
+                document.getElementById('message-log').innerHTML = '<div style="padding:20px;color:#636e72;text-align:center">Select a table row for logs</div>';
+                renderMachineOccurrences();
+                return;
+            }
+            document.querySelectorAll('.clickable-tr').forEach(el => el.classList.remove('table-row-active'));
+            tr.classList.add('table-row-active');
+            currentLogReason = name;
+            showLogs(name);
+        }
+
+        function showLogs(reason) {
+            if (!reason && !searchQuery) return;
+
+            const base = filtered.filter(d => selectedDays.length === 0 || selectedDays.includes(d._day));
+            const sub = selectedMachines.length > 0 ? base.filter(d => selectedMachines.includes(d['Machine Name'])) : base;
+            const logs = reason ? sub.filter(d => d['Category'] === reason) : sub;
+            const counts = {}; logs.forEach(d => counts[d.Message] = (counts[d.Message] || 0) + 1);
+            const sortedLogs = Object.entries(counts).sort((a,b) => b[1]-a[1]);
+
+            const displayReason = reason || `Search: "${searchQuery}"`;
+
+            document.getElementById('log-title').innerText = `💬 Log: ${displayReason}`;
+            document.getElementById('message-log').innerHTML = sortedLogs.map(([msg, c]) =>
+                `<div class="message-item ${selectedMessage === msg ? 'active' : ''}" onclick="selectMessage('${escapeHtml(msg.replace(/'/g, "\\'"))}', '${escapeHtml(reason || '')}')"><span class="msg-text">${escapeHtml(msg)}</span><span class="msg-badge">${c}</span></div>`).join('');
+
+            renderMachineOccurrences();
+        }
+
+        function selectMessage(msg, reason) {
+            if (selectedMessage === msg) {
+                selectedMessage = null;
+            } else {
+                selectedMessage = msg;
+            }
+            showLogs(reason || null);
+        }
+
+        function renderMachineOccurrences() {
+            const container = document.getElementById('machine-occurrences-container');
+            const titleEl = document.getElementById('machine-occurrences-title');
+            const logsContainer = document.getElementById('machine-datetime-logs-container');
+            const logsTitleEl = document.getElementById('machine-datetime-logs-title');
+
+            if (!currentLogReason && !searchQuery) {
+                titleEl.innerText = '🔍 Machine Occurrences';
+                container.innerHTML = '<div style="padding:20px;color:#636e72;text-align:center">Select a reason from Table View to see machine occurrences</div>';
+                logsTitleEl.innerText = '🗓️ Machine DateTime Logs';
+                logsContainer.innerHTML = '<div style="padding:20px;color:#636e72;text-align:center">Select a reason from Table View to see datetime logs</div>';
+                return;
+            }
+
+            // apply filters ignoring selected machines
+            let poolAllMachines = filtered.filter(d => selectedDays.length === 0 || selectedDays.includes(d._day));
+            if (selectedReasons.length > 0) poolAllMachines = poolAllMachines.filter(d => selectedReasons.includes(d['Category']));
+            if (currentLogReason) poolAllMachines = poolAllMachines.filter(d => d['Category'] === currentLogReason);
+            if (selectedMessage) poolAllMachines = poolAllMachines.filter(d => d.Message === selectedMessage);
+
+            poolAllMachines.sort((a, b) => a._ts - b._ts);
+
+            // aggregate counts by machine
+            const groupsAll = {};
+            poolAllMachines.forEach(d => {
+                const machine = d['Machine Name'];
+                if (!groupsAll[machine]) groupsAll[machine] = [];
+                const ts = new Date(d.Timestamp);
+                const formatted = String(ts.getDate()).padStart(2, '0') + '/' +
+                                  String(ts.getMonth() + 1).padStart(2, '0') + '/' +
+                                  ts.getFullYear() + ' ' +
+                                  String(ts.getHours()).padStart(2, '0') + ':' +
+                                  String(ts.getMinutes()).padStart(2, '0') + ':' +
+                                  String(ts.getSeconds()).padStart(2, '0');
+                groupsAll[machine].push(formatted);
+            });
+
+            const sortedGroupsAll = Object.entries(groupsAll).sort((a, b) => b[1].length - a[1].length);
+
+            const label = selectedMessage
+                ? `${currentLogReason || 'Search'} → ${selectedMessage.length > 50 ? selectedMessage.substring(0, 50) + '…' : selectedMessage}`
+                : (currentLogReason || `Search: "${searchQuery}"`);
+            const subtitle = `<span style="font-size:0.7em; font-weight:normal; color:#636e72;">(${poolAllMachines.length} total across ${sortedGroupsAll.length} machine${sortedGroupsAll.length !== 1 ? 's' : ''})</span>`;
+            
+            titleEl.innerHTML = `🔍 Machine Occurrences: ${label} ${subtitle}`;
+
+            if (sortedGroupsAll.length === 0) {
+                container.innerHTML = '<div style="padding:20px;color:#636e72;text-align:center">No occurrences found for the current filters</div>';
+                logsTitleEl.innerHTML = ` Machine DateTime Logs: ${label}`;
+                logsContainer.innerHTML = '<div style="padding:20px;color:#636e72;text-align:center">No occurrences found for the current filters</div>';
+                return;
+            }
+
+            container.innerHTML = `<div style="display: flex; flex-wrap: wrap; gap: 10px;">` + 
+                sortedGroupsAll.map(([machine, times]) => {
+                    const isActive = selectedMachines.includes(machine);
+                    const bg = isActive ? '#e17055' : '#fff5f2';
+                    const color = isActive ? '#fff' : '#2d3436';
+                    const border = isActive ? '#d63031' : '#e17055';
+                    const badgeBg = isActive ? '#fff' : '#6c5ce7';
+                    const badgeColor = isActive ? '#e17055' : '#fff';
+                    
+                    return `<div class="occurrence-group-header" onclick="toggleSelection(selectedMachines, '${escapeHtml(machine)}'); render()" style="margin:0; background: ${bg}; padding: 8px 12px; border-radius: 8px; border: 1px solid ${border}; cursor: pointer; transition: all 0.2s;">
+                        <span class="occurrence-machine-badge" style="background: ${badgeBg}; color: ${badgeColor};">${escapeHtml(machine)}</span>
+                        <span class="occurrence-count" style="color:${color}; font-weight:bold;">${times.length} occurrence${times.length !== 1 ? 's' : ''}</span>
+                    </div>`;
+                }).join('') + 
+            `</div>`;
+
+            let sortedGroupsFiltered = sortedGroupsAll;
+            if (selectedMachines.length > 0) {
+                sortedGroupsFiltered = sortedGroupsAll.filter(([machine, _]) => selectedMachines.includes(machine));
+            }
+
+            const filteredTotal = sortedGroupsFiltered.reduce((sum, [_, times]) => sum + times.length, 0);
+            const subtitleLogs = `<span style="font-size:0.7em; font-weight:normal; color:#636e72;">(${filteredTotal} total across ${sortedGroupsFiltered.length} machine${sortedGroupsFiltered.length !== 1 ? 's' : ''})</span>`;
+            logsTitleEl.innerHTML = ` Machine DateTime Logs: ${label} ${subtitleLogs}`;
+
+            if (sortedGroupsFiltered.length === 0) {
+                logsContainer.innerHTML = '<div style="padding:20px;color:#636e72;text-align:center">No occurrences found for the selected machines</div>';
+                return;
+            }
+
+            logsContainer.innerHTML = sortedGroupsFiltered.map(([machine, times]) =>
+                `<div class="occurrence-group">
+                    <div class="occurrence-group-header">
+                        <span class="occurrence-machine-badge">${escapeHtml(machine)}</span>
+                    </div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                        ${times.map(t => `<span class="occurrence-chip">${escapeHtml(machine)} (${t})</span>`).join('')}
+                    </div>
+                </div>`
+            ).join('');
+        }
+
+        function openTopMachineModal(machineName) {
+            document.getElementById('modal-title').innerText = `Breakdown: ${machineName}`;
+            document.getElementById('machine-modal').style.display = 'flex';
+            
+            const wErrs = {};
+            const dayFiltered = filtered.filter(d => selectedDays.length === 0 || selectedDays.includes(d._day));
+            dayFiltered.filter(d => d['Machine Name'] === machineName).forEach(d => wErrs[d['Category']] = (wErrs[d['Category']] || 0) + 1);
+            const wSorted = Object.entries(wErrs).sort((a,b) => b[1]-a[1]);
+            const total = wSorted.reduce((sum, x) => sum + x[1], 0);
+
+            if(modalChart) modalChart.destroy();
+            modalChart = new Chart(document.getElementById('modalChart'), {
+                type: 'doughnut',
+                data: { 
+                    labels: wSorted.map(x => `${x[0]} (${fmtPct(x[1], total)})`), 
+                    datasets: [{ data: wSorted.map(x => x[1]), backgroundColor: wSorted.map((_, i) => palette[i % palette.length]) }] 
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'right', labels: { boxWidth: 10, font: { size: 10 }, padding: 8 } },
+                        datalabels: {
+                            color: '#fff', font: { weight: 'bold', size: 12 },
+                            display: (ctx) => ((ctx.dataset.data[ctx.dataIndex] / total) * 100 < 2 ? false : 'auto'),
+                            formatter: v => ((v / total) * 100).toFixed(1) + '%'
+                        }
+                    }
+                }
+            });
+        }
+
+        fetchStoredData();
+    </script>
+    <div class="modal-overlay" id="machine-modal" onclick="if(event.target===this) this.style.display='none'">
+        <div class="modal-content">
+            <button class="modal-close" onclick="document.getElementById('machine-modal').style.display='none'">✕</button>
+            <h2 id="modal-title" style="margin-top:0; border-left: 5px solid #e17055; padding-left: 10px;">Machine Breakdown</h2>
+            <div class="canvas-wrapper" style="height: 500px; margin-top: 20px;">
+                <canvas id="modalChart"></canvas>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

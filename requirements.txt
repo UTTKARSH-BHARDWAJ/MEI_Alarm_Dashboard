@@ -1,0 +1,5 @@
+Flask==3.0.3
+openpyxl==3.1.5
+xlrd==2.0.2
+odfpy==1.4.1
+gunicorn==23.0.0
