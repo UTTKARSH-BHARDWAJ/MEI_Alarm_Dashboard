@@ -3,33 +3,67 @@ import json
 import re
 import os
 import io
+import sys
+import signal
 import logging
+import platform
 import sqlite3
 import tempfile
+import threading
 import openpyxl
 import xlrd
 from datetime import datetime
 from contextlib import closing
+from logging.handlers import RotatingFileHandler
 from flask import Flask, render_template, request, jsonify
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+# ---------------------------------------------------------------------------
+# Logging — console + rotating file
+# ---------------------------------------------------------------------------
+STORAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'storage')
+LOG_DIR = os.path.join(STORAGE_DIR, 'logs')
+os.makedirs(LOG_DIR, exist_ok=True)
+
+log_formatter = logging.Formatter(
+    '%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S'
 )
+
+# Console handler
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setFormatter(log_formatter)
+
+# Rotating file handler — 5 MB per file, keep 5 backups
+file_handler = RotatingFileHandler(
+    os.path.join(LOG_DIR, 'server.log'),
+    maxBytes=5 * 1024 * 1024,
+    backupCount=5,
+    encoding='utf-8',
+)
+file_handler.setFormatter(log_formatter)
+
+logging.basicConfig(level=logging.INFO, handlers=[console_handler, file_handler])
 log = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# App setup
+# ---------------------------------------------------------------------------
 app = Flask(__name__, template_folder='.')
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB upload cap
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50 MB upload cap
 
-STORAGE_DIR = 'storage'
 DB_PATH = os.path.join(STORAGE_DIR, 'alarms.db')
-
 os.makedirs(STORAGE_DIR, exist_ok=True)
 
+# ---------------------------------------------------------------------------
+# Database helpers — WAL mode for concurrent reads/writes, busy timeout
+# ---------------------------------------------------------------------------
+_db_lock = threading.Lock()
+
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS alarms (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,19 +86,32 @@ def init_db():
 
 init_db()
 
+# ---------------------------------------------------------------------------
+# Security headers middleware
+# ---------------------------------------------------------------------------
+@app.after_request
+def set_security_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    response.headers['Permissions-Policy'] = 'geolocation=(), camera=(), microphone=()'
+    return response
+
 def insert_records(conn, records):
     now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-    conn.executemany(
-        """INSERT OR IGNORE INTO alarms
-           (timestamp, machine_name, message, hour, category, ingested_at)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        [
-            (r.get("Timestamp"), r.get("Machine Name"), r.get("Message"),
-             r.get("Hour"), r.get("Category"), now)
-            for r in records
-        ],
-    )
-    conn.commit()
+    with _db_lock:
+        conn.executemany(
+            """INSERT OR IGNORE INTO alarms
+               (timestamp, machine_name, message, hour, category, ingested_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            [
+                (r.get("Timestamp"), r.get("Machine Name"), r.get("Message"),
+                 r.get("Hour"), r.get("Category"), now)
+                for r in records
+            ],
+        )
+        conn.commit()
 
 def fetch_all_records(conn):
     rows = conn.execute(
@@ -301,6 +348,23 @@ def aggregate_records(records):
         "count": len(records)
     }
     
+# ---------------------------------------------------------------------------
+# Health check endpoint
+# ---------------------------------------------------------------------------
+@app.route('/health')
+def health():
+    """Lightweight health check for load balancers / monitoring."""
+    try:
+        with closing(get_db()) as conn:
+            conn.execute("SELECT 1").fetchone()
+        return jsonify({"status": "healthy", "db": "ok"}), 200
+    except Exception as exc:
+        log.error('Health check failed: %s', exc)
+        return jsonify({"status": "unhealthy", "db": str(exc)}), 503
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
 @app.route('/')
 def dashboard():
     try:
@@ -367,7 +431,58 @@ def store():
 def too_large(e):
     return jsonify({"error": "File too large. Max upload size is 50MB."}), 413
 
+@app.errorhandler(404)
+def not_found(e):
+    return jsonify({"error": "Not found"}), 404
+
+@app.errorhandler(500)
+def internal_error(e):
+    log.exception('Unhandled server error')
+    return jsonify({"error": "Internal server error"}), 500
+
+# ---------------------------------------------------------------------------
+# Cross-platform production server
+# ---------------------------------------------------------------------------
+def _run_production(host, port):
+    """Pick the best available WSGI server for the current platform."""
+    if platform.system() == 'Windows':
+        # Gunicorn does not support Windows — use Waitress
+        try:
+            from waitress import serve
+            log.info('Starting Waitress server on %s:%s', host, port)
+            serve(app, host=host, port=port, threads=4,
+                  channel_timeout=120, map_size=100000)
+        except ImportError:
+            log.warning('Waitress not installed — falling back to Flask dev server. '
+                        'Install waitress: pip install waitress')
+            app.run(host=host, port=port, threaded=True)
+    else:
+        # On Linux/macOS prefer Gunicorn, fall back gracefully
+        try:
+            # When run via `python server.py`, spawn gunicorn programmatically
+            import subprocess
+            log.info('Starting Gunicorn on %s:%s', host, port)
+            subprocess.call([
+                sys.executable, '-m', 'gunicorn',
+                'server:app',
+                '--bind', f'{host}:{port}',
+                '--workers', os.environ.get('WEB_WORKERS', '2'),
+                '--timeout', '120',
+                '--access-logfile', '-',
+            ])
+        except Exception:
+            log.warning('Gunicorn not available — falling back to Flask dev server. '
+                        'Install gunicorn: pip install gunicorn')
+            app.run(host=host, port=port, threaded=True)
+
+
 if __name__ == '__main__':
+    host = os.environ.get('HOST', '0.0.0.0')
+    port = int(os.environ.get('PORT', 8080))
     debug = os.environ.get('FLASK_DEBUG', '0') == '1'
-    log.info('Starting Flask server on port 8080 (debug=%s)', debug)
-    app.run(host='0.0.0.0', port=8080, debug=debug, threaded=False)
+
+    if debug:
+        log.info('Starting Flask DEV server on %s:%s (debug=True)', host, port)
+        app.run(host=host, port=port, debug=True, threaded=True)
+    else:
+        _run_production(host, port)

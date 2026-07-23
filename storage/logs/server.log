@@ -1,0 +1,6 @@
+2026-07-21 15:05:45 [INFO] Starting Gunicorn on 0.0.0.0:8080
+2026-07-21 15:06:00 [INFO] Dashboard loaded with 0 records
+2026-07-21 15:06:14 [INFO] Analyzed 14894 records from 1 file(s)
+2026-07-22 12:22:28 [INFO] Starting Gunicorn on 0.0.0.0:8080
+2026-07-22 12:22:34 [INFO] Dashboard loaded with 0 records
+2026-07-22 12:22:57 [INFO] Analyzed 14894 records from 1 file(s)
